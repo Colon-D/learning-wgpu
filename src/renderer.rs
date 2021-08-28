@@ -1,10 +1,42 @@
+use delegate::delegate;
+use std::ops::Range;
+
 use wgpu::*;
 use winit::{dpi::*, window::*};
+
+type RenderPipelines = Vec<RenderPipeline>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderPipelineId(usize);
+
+pub struct RenderPassBuilder<'a> {
+    render_pass: wgpu::RenderPass<'a>,
+    pipelines: &'a RenderPipelines,
+}
+
+impl<'a> RenderPassBuilder<'a> {
+    /// Sets the active render pipeline.
+    ///
+    /// Subsequent draw calls will exhibit the behavior defined by `pipeline`.
+    /// # Panics
+    /// If pipeline does not exist at runtime
+    pub fn set_pipeline(&mut self, id: RenderPipelineId) {
+        let pipeline = self.pipelines.get(id.0).unwrap();
+        self.render_pass.set_pipeline(pipeline);
+    }
+    delegate! {
+        to self.render_pass {
+            /// Draws primitives from the active vertex buffer(s).
+            pub fn draw(&mut self, vertices: std::ops::Range<u32>, instances: Range<u32>);
+        }
+    }
+}
 
 pub struct Renderer {
     device: Device,
     queue: Queue,
     surface_and_config: (Surface, SurfaceConfiguration),
+    pipelines: RenderPipelines,
 }
 
 impl Renderer {
@@ -44,6 +76,7 @@ impl Renderer {
             device,
             queue,
             surface_and_config: (surface, surface_config),
+            pipelines: RenderPipelines::new(),
         }
     }
     pub fn set_surface_size(&mut self, surface_size: PhysicalSize<u32>) {
@@ -70,12 +103,13 @@ impl Renderer {
             })
     }
     pub fn create_render_pipeline(
-        &self,
+        &mut self,
         pipeline_layout: &PipelineLayout,
         shader_module: &ShaderModule,
-    ) -> RenderPipeline {
+    ) -> RenderPipelineId {
         let (_, surface_config) = &self.surface_and_config;
-        self.device
+        let pipeline = self
+            .device
             .create_render_pipeline(&RenderPipelineDescriptor {
                 label: Some("Pipeline"),
                 layout: Some(&pipeline_layout),
@@ -100,11 +134,13 @@ impl Renderer {
                 },
                 depth_stencil: None,
                 multisample: MultisampleState::default(),
-            })
+            });
+        self.pipelines.push(pipeline);
+        RenderPipelineId(self.pipelines.len() - 1)
     }
     pub fn render_pass<F>(&mut self, clear_color: Color, f: F)
     where
-        F: FnOnce(&mut RenderPass),
+        F: FnOnce(&mut RenderPassBuilder),
     {
         let (surface, _) = &self.surface_and_config;
         let frame = surface
@@ -116,7 +152,7 @@ impl Renderer {
             .device
             .create_command_encoder(&CommandEncoderDescriptor { label: None });
         {
-            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            let render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: None,
                 color_attachments: &[RenderPassColorAttachment {
                     view: &view,
@@ -128,7 +164,13 @@ impl Renderer {
                 }],
                 depth_stencil_attachment: None,
             });
-            f(&mut render_pass);
+
+            let mut builder = RenderPassBuilder {
+                render_pass,
+                pipelines: &mut self.pipelines,
+            };
+
+            f(&mut builder);
         }
         self.queue.submit(Some(encoder.finish()));
     }

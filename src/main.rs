@@ -45,7 +45,8 @@ fn main() {
                 a: 1.0,
             };
             renderer.render_pass(CORNFLOWER_BLUE, |render_pass| {
-                //render_pass.set_pipeline(&sprite_render_pipeline);
+                render_pass.set_pipeline(sprite_render_pipeline);
+                render_pass.draw(0..3, 0..1)
             });
         }
         Event::MainEventsCleared => {
